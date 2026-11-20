@@ -157,32 +157,38 @@ export async function apply(ctx, config) {
       const sq = ctx.get?.('sessionQuery');
       if (!sq?.listSessions) return [];
       const records = await sq.listSessions();
-      const ids = records.map(r => r.sessionId ?? r.header?.id).filter(Boolean);
-
-      // 标题不在列表记录里，要单独从标题快照折出来
-      const titles = new Map();
-      if (sq.readTitleSnapshots && ids.length > 0) {
-        try {
-          const snaps = await sq.readTitleSnapshots(ids);
-          ids.forEach((id, i) => {
-            const entry = snaps[i];
-            if (entry?.status === 'fulfilled' && typeof entry.value?.title === 'string' && entry.value.title !== '') {
-              titles.set(id, entry.value.title);
-            }
-          });
-        } catch { /* 标题读不到就回退到短 id */ }
-      }
-
-      return records.map(r => {
+      const rows = records.map(r => {
         const id = r.sessionId ?? r.header?.id;
         return {
           id,
-          title: titles.get(id) ?? '',
+          title: '',
           updatedAt: r.updatedAt ?? r.header?.createdAt ?? 0,
           imported: importedIds.has(id),
         };
       }).filter(r => r.id);
+
+      // 标题从日志里的 session/title 事件折出来。列表记录里没有这个字段。
+      // 会话太多时只补前两百条，剩下的显示短 id，避免一次打开上千个日志。
+      const LIMIT = 200;
+      const targets = rows.slice(0, LIMIT);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < targets.length) {
+          const row = targets[cursor++];
+          try {
+            const events = await readEventsFor(row.id);
+            let title = '';
+            for (const e of events) {
+              if (e.type === 'session/title' && typeof e.data?.title === 'string') title = e.data.title;
+            }
+            row.title = title;
+          } catch { /* 读不到就留空，界面回退到短 id */ }
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker()]);
+      return rows;
     },
+
     // 缓存占用与清理，供设置页展示与手动触发
     async cacheInfo() {
       const usage = await dirUsage(cacheDir);
