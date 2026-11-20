@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "聊天记录迁移",
+    "description": "把 DeepSeek 官方导出的聊天包导入为 DSH 会话，也支持导出。"
+  },
+  "settings": {
+    "sectionLabel": "聊天记录迁移",
+    "placeholder": "导入与导出功能在后续版本接入。"
+  }
+}
