@@ -131,7 +131,7 @@ const page = registrations.find(r => r.component && r.name.startsWith('settings.
 const side = registrations.find(r => r.name === 'sidebar.footer.action');
 
 const pageHtml = await renderComponent(page.component, '设置页');
-for (const expect of ['导入', '导出', '设置', '读取清单', 'deepseek_data-demo.zip', '读清单很快']) {
+for (const expect of ['导入', '导出', '设置', '选择文件', 'deepseek_data-demo.zip', '把聊天记录压缩包拖到这里']) {
   const hit = pageHtml.includes(expect);
   console.log(`  ${hit ? '有' : '缺'}：${expect}`);
   if (!hit) throw new Error(`设置页缺少文案：${expect}`);
