@@ -20,6 +20,8 @@ window.__ModuleLoader__.load({
       download: 'api/session-history.download',
       markdown: 'api/session-history.markdown',
       cache: 'api/session-history.cache',
+      originals: 'api/session-history.originals',
+      originalsClear: 'api/session-history.originals.clear',
       upload: 'api/session-history.upload',
       cacheClear: 'api/session-history.cache.clear',
       settings: 'api/session-history.settings',
@@ -440,15 +442,27 @@ window.__ModuleLoader__.load({
       const [cacheInfo, setCacheInfo] = useState(null);
       const [cacheBusy, setCacheBusy] = useState(false);
       const [cacheMsg, setCacheMsg] = useState('');
+      const [originalInfo, setOriginalInfo] = useState(null);
 
       const loadCache = useCallback(async () => {
         setCacheBusy(true);
         try {
-          const d = await getJson(API.cache);
-          setCacheInfo({ bytes: d.bytes ?? 0, files: d.files ?? 0 });
+          const d = await getJson(API.originals);
+          setCacheInfo({ bytes: d.cache?.bytes ?? 0, files: d.cache?.files ?? 0 });
+          setOriginalInfo({ bytes: d.originals?.bytes ?? 0, files: d.originals?.files ?? 0 });
         } catch { /* 读不到就不显示数字 */ }
         finally { setCacheBusy(false); }
       }, []);
+
+      const clearOriginals = async () => {
+        setCacheBusy(true); setCacheMsg('');
+        try {
+          const d = await postJson(API.originalsClear, {});
+          setCacheMsg(`${L('原图已清', 'Originals cleared')} ${d.files ?? 0} ${L('张，释放', 'images, freed')} ${fmtSize(d.bytes ?? 0)}`);
+          await loadCache();
+        } catch (e) { setCacheMsg(e.message); }
+        finally { setCacheBusy(false); }
+      };
 
       const clearCache = async () => {
         setCacheBusy(true); setCacheMsg('');
@@ -525,11 +539,23 @@ window.__ModuleLoader__.load({
               L('看图时生成的临时文件。超过七天没用会自动清一次，也可以现在清。', 'Temporary files made while viewing images. Cleared automatically after seven days, or now.'),
             ),
             h('div', { style: s.row },
-              h('span', { style: s.label }, cacheBusy ? L('读取中', 'Reading') : `${L('占用', 'Size')} ${fmtSize(cacheInfo?.bytes ?? 0)}（${cacheInfo?.files ?? 0} ${L('个文件', 'files')}）`),
+              h('span', { style: s.label }, cacheBusy ? L('读取中', 'Reading') : `${L('看图缓存', 'View cache')} ${fmtSize(cacheInfo?.bytes ?? 0)}`),
               h('button', {
                 style: { ...s.btn(), fontSize: 12, padding: '5px 11px' },
                 disabled: cacheBusy || (cacheInfo?.files ?? 0) === 0,
                 onClick: clearCache,
+              }, L('清理', 'Clear')),
+            ),
+            h('div', { style: s.row },
+              h('span', { style: s.label }, `${L('原图存档', 'Originals')} ${fmtSize(originalInfo?.bytes ?? 0)}（${originalInfo?.files ?? 0} ${L('张', 'images')}）`),
+              h('a', {
+                href: API.originalsInfo, target: '_blank', rel: 'noreferrer',
+                style: { ...s.btn(), fontSize: 12, padding: '5px 11px', textDecoration: 'none' },
+              }, L('明细', 'Details')),
+              h('button', {
+                style: { ...s.btn(), fontSize: 12, padding: '5px 11px' },
+                disabled: cacheBusy || (originalInfo?.files ?? 0) === 0,
+                onClick: clearOriginals,
               }, L('清理', 'Clear')),
             ),
             cacheMsg ? h('div', { style: { ...s.hint, color: C.ok } }, cacheMsg) : null,
