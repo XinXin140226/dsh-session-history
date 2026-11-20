@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
       download: 'api/session-history.download',
       markdown: 'api/session-history.markdown',
       cache: 'api/session-history.cache',
+      upload: 'api/session-history.upload',
       cacheClear: 'api/session-history.cache.clear',
       settings: 'api/session-history.settings',
       settingsSave: 'api/session-history.settings.save',
@@ -206,32 +207,82 @@ window.__ModuleLoader__.load({
 
       const running = status?.running === true;
 
+      const [dragging, setDragging] = useState(false);
+      const [uploading, setUploading] = useState(false);
+
+      const handleFile = async (file) => {
+        if (!file) return;
+        if (!/\.zip$/i.test(file.name)) { setError(L('请选择 zip 文件', 'Pick a .zip file')); return; }
+        setError(''); setUploading(true); setResult(null);
+        try {
+          const res = await fetch(`${API.upload}?name=${encodeURIComponent(file.name)}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/zip' },
+            body: file,
+          });
+          const data = await res.json().catch(() => ({ ok: false, error: `上传失败（${res.status}）` }));
+          if (!data.ok) throw new Error(data.error ?? '上传失败');
+          setZipPath(data.path);
+          await loadCatalog(data.path);
+        } catch (e) { setError(e.message); }
+        finally { setUploading(false); }
+      };
+
       return h('div', { style: s.page },
-        h('div', { style: s.card },
-          h('div', { style: s.label }, '聊天记录压缩包'),
-          h('div', { style: s.row },
+        h('div', {
+          style: {
+            ...s.card,
+            borderStyle: dragging ? 'solid' : 'dashed',
+            borderColor: dragging ? C.brand : C.border,
+            alignItems: 'center', textAlign: 'center', padding: '22px 14px', gap: 8,
+          },
+          onDragOver: (e) => { e.preventDefault(); setDragging(true); },
+          onDragLeave: () => setDragging(false),
+          onDrop: (e) => {
+            e.preventDefault(); setDragging(false);
+            const file = e.dataTransfer?.files?.[0];
+            handleFile(file);
+          },
+        },
+          h('div', { style: { fontSize: 14, color: C.label1 } },
+            uploading ? L('正在上传，别关页面', 'Uploading, keep this page open') : L('把聊天记录压缩包拖到这里', 'Drop the chat export here')),
+          h('div', { style: s.hint }, L('也可以点下面的按钮选文件。', 'Or pick a file below.')),
+          h('label', {
+            style: { ...s.btn('primary'), display: 'inline-block', padding: '8px 18px', opacity: uploading || busy ? 0.6 : 1 },
+          },
+            L('选择文件', 'Choose file'),
+            h('input', {
+              type: 'file', accept: '.zip,application/zip', style: { display: 'none' },
+              disabled: uploading || busy,
+              onChange: (e) => handleFile(e.target.files?.[0]),
+            }),
+          ),
+          uploading ? h('div', { style: s.bar }, h('div', { style: s.fill(60) })) : null,
+        ),
+
+        rows.length === 0 && !uploading ? h('div', { style: s.card },
+          h('div', { style: s.hint }, L('选好压缩包后，这里会列出里面有哪些对话。', 'After you pick a file, its conversations appear here.')),
+        ) : null,
+
+        zips.length > 0 && rows.length === 0 ? h('div', { style: s.card },
+          h('div', { style: s.label }, L('本机找到的包', 'Found on this device')),
+          ...zips.slice(0, 4).map(z => h('button', {
+            key: z.path,
+            style: { ...s.btn(), fontSize: 12, padding: '6px 10px', marginTop: 6 },
+            disabled: busy,
+            onClick: () => { setZipPath(z.path); loadCatalog(z.path); },
+          }, `${z.name}（${fmtSize(z.size)}）`)),
+        ) : null,
+
+        h('details', { style: { ...s.card, padding: '10px 14px' } },
+          h('summary', { style: { fontSize: 12, color: C.label2, cursor: 'pointer' } }, L('文件已经在设备上，直接填路径', 'The file is already here, enter its path')),
+          h('div', { style: { ...s.row, marginTop: 8 } },
             h('input', {
               style: s.input, value: zipPath, placeholder: 'zip 文件的完整路径',
               onChange: (e) => setZipPath(e.target.value),
             }),
-            h('button', { style: s.btn('primary'), disabled: busy || zipPath === '', onClick: () => loadCatalog(zipPath) },
-              busy ? '读取中' : '读取清单'),
-          ),
-          zips.length > 0 ? h('div', { style: s.row },
-            h('span', { style: s.label }, '本机找到：'),
-            ...zips.slice(0, 4).map(z => h('button', {
-              key: z.path,
-              style: { ...s.btn(), fontSize: 12, padding: '4px 10px' },
-              onClick: () => { setZipPath(z.path); loadCatalog(z.path); },
-            }, `${z.name}（${fmtSize(z.size)}）`)),
-          ) : null,
-          h('div', { style: s.hint }, '读清单很快，导入才解析正文。'),
-          h('label', { style: { ...s.label, display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 } },
-            h('input', {
-              type: 'checkbox', checked: withImages,
-              onChange: (e) => setWithImages(e.target.checked),
-            }),
-            L('同时导入图片（会占更多空间）', 'Also import images (uses more space)'),
+            h('button', { style: s.btn(), disabled: busy || zipPath === '', onClick: () => { setZipPath(zipPath); loadCatalog(zipPath); } },
+              busy ? '读取中' : '读取'),
           ),
         ),
 
@@ -273,7 +324,7 @@ window.__ModuleLoader__.load({
               style: { ...s.btn('primary'), opacity: picked.size === 0 || running ? 0.5 : 1 },
               disabled: picked.size === 0 || running,
               onClick: start,
-            }, running ? '导入中' : `导入已选 ${picked.size} 个`),
+            }, running ? L('导入中', 'Importing') : `${L('导入', 'Import')} ${picked.size} ${L('个会话', 'conversations')}`),
             running ? h('button', { style: s.btn(), onClick: () => postJson(API.cancel).catch(() => {}) }, '取消') : null,
           ),
           running ? h(ProgressBar, { status }) : null,
@@ -501,6 +552,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('import');
       return h('div', { style: s.page },
         h('div', { style: { fontSize: 16, fontWeight: 600, color: C.label1 } }, TITLE),
+        h('div', { style: s.hint }, L('选压缩包，勾会话，点导入。', 'Pick the archive, tick conversations, press Import.')),
         h('div', { style: s.tabs },
           h('button', { style: s.tab(tab === 'import'), onClick: () => setTab('import') }, L('导入', 'Import')),
           h('button', { style: s.tab(tab === 'export'), onClick: () => setTab('export') }, L('导出', 'Export')),
