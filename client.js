@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
       export: 'api/session-history.export',
       download: 'api/session-history.download',
       markdown: 'api/session-history.markdown',
+      cache: 'api/session-history.cache',
+      cacheClear: 'api/session-history.cache.clear',
       settings: 'api/session-history.settings',
       settingsSave: 'api/session-history.settings.save',
     };
@@ -168,6 +170,7 @@ window.__ModuleLoader__.load({
                 done: d.status.done, failed: d.status.failed, skipped: d.status.skipped,
                 errors: d.status.errors ?? [], warnings: d.status.warnings ?? [],
                 images: d.status.images ?? 0, imageFailures: d.status.imageFailures ?? 0,
+                savedBytes: d.status.savedBytes ?? 0,
               });
             }
           } catch { /* 忽略单次失败 */ }
@@ -205,10 +208,10 @@ window.__ModuleLoader__.load({
 
       return h('div', { style: s.page },
         h('div', { style: s.card },
-          h('div', { style: s.label }, '导出包路径'),
+          h('div', { style: s.label }, '聊天记录压缩包'),
           h('div', { style: s.row },
             h('input', {
-              style: s.input, value: zipPath, placeholder: '粘贴 zip 的绝对路径',
+              style: s.input, value: zipPath, placeholder: 'zip 文件的完整路径',
               onChange: (e) => setZipPath(e.target.value),
             }),
             h('button', { style: s.btn('primary'), disabled: busy || zipPath === '', onClick: () => loadCatalog(zipPath) },
@@ -222,13 +225,13 @@ window.__ModuleLoader__.load({
               onClick: () => { setZipPath(z.path); loadCatalog(z.path); },
             }, `${z.name}（${fmtSize(z.size)}）`)),
           ) : null,
-          h('div', { style: s.hint }, '只读取索引，不解析正文。解析量取决于你勾选的会话数。'),
+          h('div', { style: s.hint }, '读清单很快，导入才解析正文。'),
           h('label', { style: { ...s.label, display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 } },
             h('input', {
               type: 'checkbox', checked: withImages,
               onChange: (e) => setWithImages(e.target.checked),
             }),
-            L('同时导入图片（实验性，体积会明显变大）', 'Also import images (experimental, much larger)'),
+            L('同时导入图片（会占更多空间）', 'Also import images (uses more space)'),
           ),
         ),
 
@@ -243,7 +246,7 @@ window.__ModuleLoader__.load({
             h('span', { style: s.label }, `共 ${filtered.length} 个`),
           ),
           h('div', { style: s.row },
-            h('button', { style: s.btn(), onClick: () => setPicked(new Set(filtered.map(r => r.originId))) }, '全选当前结果'),
+            h('button', { style: s.btn(), onClick: () => setPicked(new Set(filtered.map(r => r.originId))) }, L('全选', 'Select all')),
             h('button', { style: s.btn(), onClick: () => setPicked(new Set()) }, '清空'),
             h('button', { style: s.btn(), onClick: () => setPicked(new Set(rows.filter(r => r.updatedAtMs > Date.now() - 30 * 864e5).map(r => r.originId))) }, '最近三十天'),
           ),
@@ -253,7 +256,7 @@ window.__ModuleLoader__.load({
               return h('label', { key: r.originId, style: s.item },
                 h('input', { type: 'checkbox', checked: on, onChange: () => toggle(r.originId), style: { marginTop: 3 } }),
                 h('div', { style: { flex: 1, minWidth: 0 } },
-                  h('div', { style: s.title }, r.title || '（无标题）'),
+                  h('div', { style: s.title }, r.title || `${L('未命名会话', 'Untitled session')} · ${String(r.originId).slice(-8)}`),
                   h('div', { style: s.meta }, `${r.messageCount} 条消息${r.updatedAtMs ? ` · ${fmtTime(r.updatedAtMs)}` : ''}`),
                 ),
                 r.pinned ? h('span', { style: s.tag(C.warn) }, '置顶') : null,
@@ -276,7 +279,7 @@ window.__ModuleLoader__.load({
           running ? h(ProgressBar, { status }) : null,
           result ? h('div', { style: s.hint },
             `完成 ${result.done} 个` + (result.skipped ? `，跳过 ${result.skipped} 个` : '') + (result.failed ? `，失败 ${result.failed} 个` : ''),
-            result.images ? `，导入图片 ${result.images} 张` : '',
+            result.images ? `，导入图片 ${result.images} 张${result.savedBytes ? `（压缩省下 ${fmtSize(result.savedBytes)}）` : ''}` : '',
             result.imageFailures ? `，图片失败 ${result.imageFailures} 张` : '',
             result.warnings?.length ? h('div', { style: { ...s.hint, marginTop: 4 } },
               ...result.warnings.slice(0, 3).map((w, i) => h('div', { key: i }, w)),
@@ -335,7 +338,7 @@ window.__ModuleLoader__.load({
               '只看导入的'),
           ),
           h('div', { style: s.row },
-            h('button', { style: s.btn(), onClick: () => setPicked(new Set(filtered.map(r => r.id))) }, '全选当前结果'),
+            h('button', { style: s.btn(), onClick: () => setPicked(new Set(filtered.map(r => r.id))) }, L('全选', 'Select all')),
             h('button', { style: s.btn(), onClick: () => setPicked(new Set()) }, '清空'),
             h('span', { style: s.label }, `共 ${filtered.length} 个，已选 ${picked.size}`),
           ),
@@ -350,7 +353,7 @@ window.__ModuleLoader__.load({
                 }),
               }),
               h('div', { style: { flex: 1, minWidth: 0 } },
-                h('div', { style: s.title }, r.title || r.id),
+                h('div', { style: s.title }, r.title || `${L('未命名会话', 'Untitled session')} · ${String(r.id).slice(-8)}`),
                 h('div', { style: s.meta }, fmtTime(r.updatedAt)),
               ),
               r.imported ? h('span', { style: s.tag(C.ok) }, '导入') : null,
@@ -383,10 +386,33 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false);
       const [msg, setMsg] = useState('');
       const [error, setError] = useState('');
+      const [cacheInfo, setCacheInfo] = useState(null);
+      const [cacheBusy, setCacheBusy] = useState(false);
+      const [cacheMsg, setCacheMsg] = useState('');
+
+      const loadCache = useCallback(async () => {
+        setCacheBusy(true);
+        try {
+          const d = await getJson(API.cache);
+          setCacheInfo({ bytes: d.bytes ?? 0, files: d.files ?? 0 });
+        } catch { /* 读不到就不显示数字 */ }
+        finally { setCacheBusy(false); }
+      }, []);
+
+      const clearCache = async () => {
+        setCacheBusy(true); setCacheMsg('');
+        try {
+          const d = await postJson(API.cacheClear, {});
+          setCacheMsg(`${L('已清理', 'Cleared')} ${d.files ?? 0} ${L('个文件，释放', 'files, freed')} ${fmtSize(d.bytes ?? 0)}`);
+          await loadCache();
+        } catch (e) { setCacheMsg(e.message); }
+        finally { setCacheBusy(false); }
+      };
 
       useEffect(() => {
         getJson(API.settings).then((d) => { setConfig(d.config ?? {}); setDraft(d.config ?? {}); }).catch((e) => setError(e.message));
-      }, []);
+        loadCache();
+      }, [loadCache]);
 
       const set = (k, v) => setDraft((prev) => ({ ...prev, [k]: v }));
       const dirty = config !== null && Object.keys(draft).some(k => draft[k] !== config[k]);
@@ -442,6 +468,21 @@ window.__ModuleLoader__.load({
           choose('timeStrategy', '时间处理', [['original', '保留原始时间'], ['import-time', '改写为导入时间']], '保留原始时间会还原真实顺序，老会话排在侧栏靠下'),
           choose('toolSummary', '检索过程怎么显示', [['line', '一行摘要'], ['queries', '带检索词'], ['off', '不显示']], '联网检索的过程只影响展示，不影响导入内容'),
           choose('tier', '性能档位', [['auto', '自动'], ['low', '低'], ['mid', '标准'], ['high', '高']], '自动会按设备核数与可用内存选档，并在导入时按实测速度下调'),
+          h('div', { style: { ...s.card, marginTop: 6, background: C.bg2 } },
+            h('div', { style: { fontSize: 13, color: C.label1 } }, L('附件缓存', 'Attachment cache')),
+            h('div', { style: s.hint },
+              L('看图时生成的临时文件。超过七天没用会自动清一次，也可以现在清。', 'Temporary files made while viewing images. Cleared automatically after seven days, or now.'),
+            ),
+            h('div', { style: s.row },
+              h('span', { style: s.label }, cacheBusy ? L('读取中', 'Reading') : `${L('占用', 'Size')} ${fmtSize(cacheInfo?.bytes ?? 0)}（${cacheInfo?.files ?? 0} ${L('个文件', 'files')}）`),
+              h('button', {
+                style: { ...s.btn(), fontSize: 12, padding: '5px 11px' },
+                disabled: cacheBusy || (cacheInfo?.files ?? 0) === 0,
+                onClick: clearCache,
+              }, L('清理', 'Clear')),
+            ),
+            cacheMsg ? h('div', { style: { ...s.hint, color: C.ok } }, cacheMsg) : null,
+          ),
           h('div', { style: s.row, marginTop: 4 },
             h('button', {
               style: { ...s.btn('primary'), opacity: !dirty || busy ? 0.5 : 1 },
