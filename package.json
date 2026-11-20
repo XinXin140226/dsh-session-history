@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-history",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Import DeepSeek app chat exports into DSH sessions and export them back",
   "license": "MIT",
   "type": "module",
