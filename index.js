@@ -11,6 +11,7 @@ import { TaskProgress } from './lib/store/progress.mjs';
 import { readCatalog, runImport } from './lib/plan/importer.mjs';
 import { runExport } from './lib/plan/exporter.mjs';
 import { registerRoutes } from './lib/host/routes.mjs';
+import { dirUsage, clearDir, autoCleanIfDue, markClean } from './lib/store/cache.mjs';
 
 export const Config = Schema.object({
   // 导入会话记录哪个预设；关闭则记录官方 minimal，恢复后不带联网搜索
@@ -57,6 +58,8 @@ export async function apply(ctx, config) {
   const dataDir = config.dataDir ?? join(dshHome, 'plugin-data', 'dsh-session-history');
   const importCwd = join(dataDir, 'workspace');
   const exportsDir = join(dataDir, 'exports');
+  const cacheDir = join(dshHome, 'cache', 'attachments');
+  const cacheStamp = join(dataDir, 'cache-clean.stamp');
   mkdirSync(importCwd, { recursive: true });
   mkdirSync(exportsDir, { recursive: true });
 
@@ -98,6 +101,9 @@ export async function apply(ctx, config) {
     withImages: config.images && Boolean(attachments),
     resolveCwd: () => importCwd,
   };
+
+  // 每次启动检查一次，满七天就清附件缓存
+  const cleanResult = await autoCleanIfDue({ cacheDir, stampFile: cacheStamp, logger: ctx.logger });
 
   ctx.logger?.info?.(
     'session history ready: import=%s export=%s tier=%s data=%s',
@@ -149,16 +155,43 @@ export async function apply(ctx, config) {
     // 会话列表，供导出与预览共用
     async sessionRows() {
       const sq = ctx.get?.('sessionQuery');
-      if (sq?.listSessions) {
-        const records = await sq.listSessions();
-        return records.map(r => ({
-          id: r.sessionId ?? r.header?.id,
-          title: r.title ?? '',
-          updatedAt: r.updatedAt ?? r.header?.createdAt ?? 0,
-          imported: importedIds.has(r.sessionId ?? r.header?.id),
-        })).filter(r => r.id);
+      if (!sq?.listSessions) return [];
+      const records = await sq.listSessions();
+      const ids = records.map(r => r.sessionId ?? r.header?.id).filter(Boolean);
+
+      // 标题不在列表记录里，要单独从标题快照折出来
+      const titles = new Map();
+      if (sq.readTitleSnapshots && ids.length > 0) {
+        try {
+          const snaps = await sq.readTitleSnapshots(ids);
+          ids.forEach((id, i) => {
+            const entry = snaps[i];
+            if (entry?.status === 'fulfilled' && typeof entry.value?.title === 'string' && entry.value.title !== '') {
+              titles.set(id, entry.value.title);
+            }
+          });
+        } catch { /* 标题读不到就回退到短 id */ }
       }
-      return [];
+
+      return records.map(r => {
+        const id = r.sessionId ?? r.header?.id;
+        return {
+          id,
+          title: titles.get(id) ?? '',
+          updatedAt: r.updatedAt ?? r.header?.createdAt ?? 0,
+          imported: importedIds.has(id),
+        };
+      }).filter(r => r.id);
+    },
+    // 缓存占用与清理，供设置页展示与手动触发
+    async cacheInfo() {
+      const usage = await dirUsage(cacheDir);
+      return { ...usage, dir: cacheDir };
+    },
+    async clearCache() {
+      const removed = await clearDir(cacheDir);
+      await markClean(cacheStamp);
+      return removed;
     },
     status() { return lastProgress ?? progress.get(); },
     cancel() { progress.cancel(); },
