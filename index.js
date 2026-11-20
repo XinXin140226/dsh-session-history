@@ -60,6 +60,7 @@ export async function apply(ctx, config) {
   const exportsDir = join(dataDir, 'exports');
   const cacheDir = join(dshHome, 'cache', 'attachments');
   const cacheStamp = join(dataDir, 'cache-clean.stamp');
+  const uploadDir = join(dataDir, 'uploads');
   mkdirSync(importCwd, { recursive: true });
   mkdirSync(exportsDir, { recursive: true });
 
@@ -235,7 +236,7 @@ export async function apply(ctx, config) {
   // Cordis 要求服务先 provide；直接赋值会被拒绝
   ctx.provide('sessionHistory', service);
   ctx.effect(() => {
-    registerRoutes(ctx, { config, service, exportsDir });
+    registerRoutes(ctx, { config, service, exportsDir, uploadDir });
     return () => {};
   }, 'session-history routes');
 }
