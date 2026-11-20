@@ -1,0 +1,48 @@
+{
+  "name": "dsh-session-history",
+  "version": "0.1.0",
+  "description": "Import DeepSeek app chat exports into DSH sessions and export them back",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "lib/**/*.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-cordis"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "chat-history",
+    "import",
+    "export"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XinXin140226/dsh-session-history.git"
+  },
+  "author": "XinXin140226"
+}
