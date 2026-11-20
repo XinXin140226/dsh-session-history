@@ -12,6 +12,7 @@ import { readCatalog, runImport } from './lib/plan/importer.mjs';
 import { runExport } from './lib/plan/exporter.mjs';
 import { registerRoutes } from './lib/host/routes.mjs';
 import { dirUsage, clearDir, autoCleanIfDue, markClean } from './lib/store/cache.mjs';
+import { OriginalStore } from './lib/store/originals.mjs';
 
 export const Config = Schema.object({
   // 导入会话记录哪个预设；关闭则记录官方 minimal，恢复后不带联网搜索
@@ -61,6 +62,7 @@ export async function apply(ctx, config) {
   const cacheDir = join(dshHome, 'cache', 'attachments');
   const cacheStamp = join(dataDir, 'cache-clean.stamp');
   const uploadDir = join(dataDir, 'uploads');
+  const originals = new OriginalStore(join(dataDir, 'originals'));
   mkdirSync(importCwd, { recursive: true });
   mkdirSync(exportsDir, { recursive: true });
 
@@ -100,6 +102,7 @@ export async function apply(ctx, config) {
     provenance: config.provenance,
     attachments,
     withImages: config.images && Boolean(attachments),
+    originals,
     resolveCwd: () => importCwd,
   };
 
@@ -191,6 +194,17 @@ export async function apply(ctx, config) {
     },
 
     // 缓存占用与清理，供设置页展示与手动触发
+    async originalInfo() {
+      const usage = await originals.usage();
+      const cache = await dirUsage(cacheDir);
+      return { originals: usage, cache };
+    },
+    async originalOf(id) {
+      return originals.get(String(id).replace(/^sha256:/, ''));
+    },
+    async clearOriginals() {
+      return originals.clear();
+    },
     async cacheInfo() {
       const usage = await dirUsage(cacheDir);
       return { ...usage, dir: cacheDir };
@@ -217,6 +231,7 @@ export async function apply(ctx, config) {
         provenance: config.provenance,
     attachments,
     withImages: config.images && Boolean(attachments),
+    originals,
         toolSummary: config.toolSummary,
         images: config.images,
         tier: config.tier,
