@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "Chat history migration",
+    "description": "Import DeepSeek app chat exports as DSH sessions and export sessions back out."
+  },
+  "settings": {
+    "sectionLabel": "Chat history migration",
+    "placeholder": "Import and export arrive in a later build."
+  }
+}
