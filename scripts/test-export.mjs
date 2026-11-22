@@ -47,5 +47,13 @@ console.log('文件:', exp.files.join(', '));
 
 await ctx.fiber.dispose();
 const ok = exp.exported === ids.length && exp.failed === 0 && exp.bytes > 1000;
+// 闭环：把刚导出的 zip 再读一次清单
+// readCatalog 已在文件上方导入
+const back = await readCatalog(OUT);
+console.log('回读清单:', back.length, '条，类型', back[0]?.kind);
+if (back.length !== ids.length || back[0]?.kind !== 'exchange') {
+  console.log('EXPORT_TEST_FAIL 闭环读取不对');
+  process.exit(1);
+}
 console.log(ok ? 'EXPORT_TEST_OK' : 'EXPORT_TEST_FAIL');
 process.exit(ok ? 0 : 1);
