@@ -140,6 +140,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('');
       const [result, setResult] = useState(null);
       const [withImages, setWithImages] = useState(false);
+      const [presetId, setPresetId] = useState('');
       const PAGE = 60;
 
       useEffect(() => {
@@ -156,11 +157,14 @@ window.__ModuleLoader__.load({
           setRows(d.rows ?? []);
           setPicked(new Set());
           setPage(0);
+          // 默认值随包类型：官方包极简，插件包带搜索
+          setPresetId((d.rows ?? [])[0]?.kind === 'exchange' ? 'dsh-session-history' : 'minimal');
         } catch (e) { setError(e.message); }
         finally { setBusy(false); }
       }, []);
 
-      // 任务状态轮询
+      // 任务状态轮询。只认挂载之后开始的任务，避免一进页面就显示上次的结果
+      const mountedAt = useMemo(() => Date.now(), []);
       useEffect(() => {
         let alive = true;
         const tick = async () => {
@@ -168,7 +172,7 @@ window.__ModuleLoader__.load({
             const d = await getJson(API.status);
             if (!alive) return;
             setStatus(d.status);
-            if (d.status && !d.status.running && d.status.finishedAt) {
+            if (d.status && !d.status.running && d.status.finishedAt && (d.status.startedAt ?? 0) > mountedAt) {
               setResult({
                 done: d.status.done, failed: d.status.failed, skipped: d.status.skipped,
                 errors: d.status.errors ?? [], warnings: d.status.warnings ?? [],
@@ -203,10 +207,11 @@ window.__ModuleLoader__.load({
       const start = async () => {
         setError(''); setResult(null);
         try {
-          await postJson(API.import, { zipPath, ids: [...picked], withImages });
+          await postJson(API.import, { zipPath, ids: [...picked], withImages, ...(presetId ? { presetId } : {}) });
         } catch (e) { setError(e.message); }
       };
 
+      const isPluginPack = rows.length > 0 && rows[0]?.kind === 'exchange';
       const running = status?.running === true;
 
       const [dragging, setDragging] = useState(false);
@@ -321,6 +326,24 @@ window.__ModuleLoader__.load({
             h('span', { style: s.label }, `第 ${page + 1} / ${pages} 页`),
             h('button', { style: s.btn(), disabled: page + 1 >= pages, onClick: () => setPage(p => Math.min(pages - 1, p + 1)) }, '下一页'),
           ) : null,
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+            h('span', { style: s.label }, L('导入后用什么模式', 'Mode after import')),
+            h('div', { style: s.row },
+              ...[
+                ['dsh-session-history', L('带联网搜索', 'With search')],
+                ['minimal', L('极简', 'Minimal')],
+                ['standard', L('标准', 'Standard')],
+              ].map(([value, text]) => h('button', {
+                key: value,
+                style: { ...s.btn(presetId === value ? 'primary' : undefined), fontSize: 12, padding: '5px 11px' },
+                disabled: running,
+                onClick: () => setPresetId(value),
+              }, text)),
+            ),
+            h('div', { style: s.hint }, isPluginPack
+              ? L('插件包默认带联网搜索。', 'Plugin packages default to search enabled.')
+              : L('官方包默认极简。', 'Official packages default to minimal.')),
+          ),
           h('div', { style: s.row },
             h('button', {
               style: { ...s.btn('primary'), opacity: picked.size === 0 || running ? 0.5 : 1 },
