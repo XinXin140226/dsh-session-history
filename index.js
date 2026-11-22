@@ -33,8 +33,12 @@ export const Config = Schema.object({
 
 const PRESET_WITH_SEARCH = 'dsh-session-history';
 const PRESET_PLAIN = 'minimal';
+const PRESET_STANDARD = 'standard';
+// 导入时可选的预设，界面与路由共用同一份
+const PRESETS = new Set([PRESET_WITH_SEARCH, PRESET_PLAIN, PRESET_STANDARD]);
 
 let sessionPersistenceRef;
+const titleCache = new Map();
 
 
 async function readEventsFor(sessionId) {
@@ -96,6 +100,10 @@ export async function apply(ctx, config) {
     progress,
     params,
     presetId: config.searchPreset ? PRESET_WITH_SEARCH : PRESET_PLAIN,
+    // 官方包固定极简；插件包默认按设置走，导入时可临时改
+    presetIdFor: (kind) => (kind === 'exchange'
+      ? (config.searchPreset ? PRESET_WITH_SEARCH : PRESET_PLAIN)
+      : PRESET_PLAIN),
     timeStrategy: config.timeStrategy,
     includeToolLine: config.toolSummary !== 'off',
     toolSummary: config.toolSummary,
@@ -123,9 +131,13 @@ export async function apply(ctx, config) {
     startImport(zipPath, selectedIds, options = {}) {
       if (!caps.import) throw new Error('当前环境不能导入');
       if (progress.get().running) throw new Error('已有任务在跑');
-      const runServices = options.withImages === true
-        ? { ...services, withImages: true }
-        : services;
+      const runServices = { ...services };
+      if (options.withImages === true) runServices.withImages = true;
+      // 两种包都允许临时改预设，区别只在默认值
+      if (typeof options.presetId === 'string' && PRESETS.has(options.presetId)) {
+        const chosen = options.presetId;
+        runServices.presetIdFor = () => chosen;
+      }
       const promise = runImport({ zipPath, selectedIds, services: runServices })
         .then((r) => {
           for (const rec of idmap.map.values()) importedIds.add(rec);
@@ -135,22 +147,23 @@ export async function apply(ctx, config) {
       return { promise, status: () => progress.get() };
     },
     importAndWait(zipPath, selectedIds) { return runImport({ zipPath, selectedIds, services }); },
-    startExport(sessionIds, outPath) {
+    startExport(sessionIds, outPath, options = {}) {
       if (!caps.export) throw new Error('当前环境不能导出');
       if (progress.get().running) throw new Error('已有任务在跑');
-      const promise = runExport({ sessionIds, outPath, services }).catch(e => ({ error: String(e?.message ?? e) }));
+      const importedSet = new Set(options.importedIds ?? [...importedIds]);
+      const promise = runExport({ sessionIds, outPath, services: { ...services, isImported: id => importedSet.has(id) } })
+        .catch(e => ({ error: String(e?.message ?? e) }));
       return { promise, status: () => progress.get() };
     },
-    exportAndWait(sessionIds, outPath) { return runExport({ sessionIds, outPath, services }); },
+    exportAndWait(sessionIds, outPath) { return runExport({ sessionIds, outPath, services: { ...services, isImported: id => importedIds.has(id) } }); },
     // 单个会话的 Markdown，供界面直接预览或下载
     async markdownOf(sessionId) {
-      const rows = await service.sessionRows();
-      const row = rows.find(r => r.id === sessionId);
+      // 只读这一个会话的事件，标题也从中取，不去翻全量列表
       const events = await readEventsFor(sessionId);
       const { titleFromEvents, renderMarkdown } = await import('./lib/report/markdown.mjs');
       return renderMarkdown({
         id: sessionId,
-        title: row?.title ?? titleFromEvents(events, sessionId),
+        title: titleFromEvents(events, sessionId),
         createdAt: events[0]?.time,
         events,
         imported: importedIds.has(sessionId),
@@ -172,13 +185,14 @@ export async function apply(ctx, config) {
       }).filter(r => r.id);
 
       // 标题从日志里的 session/title 事件折出来。列表记录里没有这个字段。
-      // 会话太多时只补前两百条，剩下的显示短 id，避免一次打开上千个日志。
-      const LIMIT = 200;
-      const targets = rows.slice(0, LIMIT);
+      // 标题定了就不会变，读过的记在内存里，第二次直接命中，不再翻日志。
+      const targets = rows;
       let cursor = 0;
       const worker = async () => {
         while (cursor < targets.length) {
           const row = targets[cursor++];
+          const cached = titleCache.get(row.id);
+          if (cached !== undefined) { row.title = cached; continue; }
           try {
             const events = await readEventsFor(row.id);
             let title = '';
@@ -186,6 +200,7 @@ export async function apply(ctx, config) {
               if (e.type === 'session/title' && typeof e.data?.title === 'string') title = e.data.title;
             }
             row.title = title;
+            titleCache.set(row.id, title);
           } catch { /* 读不到就留空，界面回退到短 id */ }
         }
       };
@@ -217,6 +232,7 @@ export async function apply(ctx, config) {
     status() { return lastProgress ?? progress.get(); },
     cancel() { progress.cancel(); },
     importedCount() { return idmap.size(); },
+    importedIds() { return [...importedIds]; },
     isImported(sessionId) { return importedIds.has(sessionId); },
     // 保存配置：走官方编辑器，写回 profile 补丁并重启本插件
     async saveConfig(patch) {
@@ -229,9 +245,6 @@ export async function apply(ctx, config) {
         searchPreset: config.searchPreset,
         timeStrategy: config.timeStrategy,
         provenance: config.provenance,
-    attachments,
-    withImages: config.images && Boolean(attachments),
-    originals,
         toolSummary: config.toolSummary,
         images: config.images,
         tier: config.tier,
@@ -239,6 +252,7 @@ export async function apply(ctx, config) {
       };
       await editor.edit(entry, () => merged);
     },
+    presets: [...PRESETS],
     config: {
       searchPreset: config.searchPreset,
       timeStrategy: config.timeStrategy,
