@@ -88,6 +88,12 @@ const exp = await call('/api/session-history.export', { method: 'POST', body: { 
 console.log('导出:', exp.ok, exp.exported, '个，', exp.bytes, '字节，文件', exp.name);
 
 // 6 下载
+const named = !/^dsh-sessions-/.test(exp.name) && /\.zip$/.test(exp.name);
+console.log('导出文件名用标题:', exp.name, named ? 'OK' : '不对');
+
+const md1 = await call(`/api/session-history.markdown?sessionId=${encodeURIComponent(list.rows[0].id)}`);
+console.log('单会话 md:', md1.ct.includes('markdown') ? '类型正确' : md1.ct, md1.buffer?.length ?? 0, '字节');
+
 const dl = await call(`/api/session-history.download?name=${encodeURIComponent(exp.name)}`);
 console.log('下载:', dl.buffer.length, '字节', dl.ct);
 writeFileSync('/tmp/test-routes-download.zip', dl.buffer);
@@ -105,6 +111,6 @@ console.log('路径穿越拦截:', bad.ok === false, bad.error);
 await ctx.fiber.dispose();
 const ok = scan.ok && cat.rows.length === 1992 && status.done === 3 && status.failed === 0
   && list.rows.length === 3 && exp.ok && exp.exported === 3 && dl.buffer.length === exp.bytes
-  && bad.ok === false;
+  && bad.ok === false && named && md1.buffer.length > 200;
 console.log(ok ? 'ROUTES_TEST_OK' : 'ROUTES_TEST_FAIL');
 process.exit(ok ? 0 : 1);
