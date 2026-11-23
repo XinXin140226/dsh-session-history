@@ -23,6 +23,9 @@ window.__ModuleLoader__.load({
       originals: 'api/session-history.originals',
       originalsClear: 'api/session-history.originals.clear',
       upload: 'api/session-history.upload',
+      share: 'api/session-history.share',
+      update: 'api/session-history.update',
+      updateApply: 'api/session-history.update.apply',
       cacheClear: 'api/session-history.cache.clear',
       settings: 'api/session-history.settings',
       settingsSave: 'api/session-history.settings.save',
@@ -49,15 +52,22 @@ window.__ModuleLoader__.load({
     const L = (zh, en) => (isZh ? zh : en);
     const TITLE = L('聊天记录迁移', 'Chat history migration');
 
+    // 路由注册在站点根下的 /api/...，前端必须用绝对路径拼，
+    // 否则页面在带层级的地址上打开时，相对路径会被解析到下一层而 404。
+    const ORIGIN = (() => {
+      try { return String(globalThis.location?.origin ?? ''); } catch { return ''; }
+    })();
+    const apiUrl = (path) => `${ORIGIN}/${String(path).replace(/^\/+/, '')}`;
+
     async function getJson(path) {
-      const res = await fetch(path, { headers: { accept: 'application/json' } });
+      const res = await fetch(apiUrl(path), { headers: { accept: 'application/json' } });
       const data = await res.json().catch(() => ({ ok: false, error: `响应不是 JSON（${res.status}）` }));
       if (!data.ok) throw new Error(data.error ?? `请求失败（${res.status}）`);
       return data;
     }
 
     async function postJson(path, body) {
-      const res = await fetch(path, {
+      const res = await fetch(apiUrl(path), {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify(body ?? {}),
@@ -222,7 +232,7 @@ window.__ModuleLoader__.load({
         if (!/\.zip$/i.test(file.name)) { setError(L('请选择 zip 文件', 'Pick a .zip file')); return; }
         setError(''); setUploading(true); setResult(null);
         try {
-          const res = await fetch(`${API.upload}?name=${encodeURIComponent(file.name)}`, {
+          const res = await fetch(apiUrl(`${API.upload}?name=${encodeURIComponent(file.name)}`), {
             method: 'POST',
             headers: { 'content-type': 'application/zip' },
             body: file,
@@ -396,6 +406,21 @@ window.__ModuleLoader__.load({
         return rows.filter(r => (r.title ?? '').toLowerCase().includes(q));
       }, [rows, query]);
 
+      const [shareMsg, setShareMsg] = useState('');
+
+      const share = async () => {
+        if (!done) return;
+        setShareMsg('');
+        try {
+          const r = await postJson(API.share, { name: done.name });
+          if (r.shared) setShareMsg(L('已交给系统分享', 'Opened the system share sheet'));
+          else {
+            setShareMsg(L('这台机器没有分享面板，改为下载', 'No share sheet here, downloading instead'));
+            window.open(apiUrl(`${API.download}?name=${encodeURIComponent(done.name)}`), '_blank');
+          }
+        } catch (e) { setShareMsg(e.message); }
+      };
+
       const run = async () => {
         setBusy(true); setError(''); setDone(null);
         try {
@@ -442,14 +467,17 @@ window.__ModuleLoader__.load({
             }, busy ? '导出中' : `导出已选 ${picked.size} 个`),
             picked.size === 1 ? h('a', {
               style: { ...s.btn(), textDecoration: 'none' },
-              href: `${API.markdown}?sessionId=${encodeURIComponent([...picked][0])}`,
+              href: apiUrl(`${API.markdown}?sessionId=${encodeURIComponent([...picked][0])}`),
             }, L('下载这一个的 Markdown', 'Download this one as Markdown')) : null,
+            done ? h('button', { style: s.btn('primary'), onClick: share },
+              L('分享', 'Share')) : null,
             done ? h('a', {
               style: { ...s.btn(), textDecoration: 'none' },
-              href: `${API.download}?name=${encodeURIComponent(done.name)}`,
+              href: apiUrl(`${API.download}?name=${encodeURIComponent(done.name)}`),
             }, `下载 ${done.name}`) : null,
           ),
           done ? h('div', { style: s.hint }, `已导出 ${done.exported} 个，${fmtSize(done.bytes)}${done.failed ? `，失败 ${done.failed} 个` : ''}`) : null,
+          shareMsg ? h('div', { style: s.hint }, shareMsg) : null,
           error ? h('div', { style: s.err }, error) : null,
         ),
       );
@@ -465,6 +493,10 @@ window.__ModuleLoader__.load({
       const [cacheInfo, setCacheInfo] = useState(null);
       const [cacheBusy, setCacheBusy] = useState(false);
       const [cacheMsg, setCacheMsg] = useState('');
+      const [version, setVersion] = useState('');
+      const [updateState, setUpdateState] = useState(null);
+      const [updateBusy, setUpdateBusy] = useState(false);
+      const [updateMsg, setUpdateMsg] = useState('');
       const [originalInfo, setOriginalInfo] = useState(null);
 
       const loadCache = useCallback(async () => {
@@ -476,6 +508,35 @@ window.__ModuleLoader__.load({
         } catch { /* 读不到就不显示数字 */ }
         finally { setCacheBusy(false); }
       }, []);
+
+      const checkUpdate = async () => {
+        setUpdateBusy(true); setUpdateMsg('');
+        try {
+          const d = await getJson(API.update);
+          setUpdateState(d);
+          if (!d.ok) setUpdateMsg(d.error ?? L('检查失败', 'Check failed'));
+          else setUpdateMsg(d.newer
+            ? L(`发现新版本 ${d.latest}`, `Found ${d.latest}`)
+            : L('已经是最新版本', 'Up to date'));
+        } catch (e) { setUpdateMsg(e.message); }
+        finally { setUpdateBusy(false); }
+      };
+
+      const applyUpdate = async () => {
+        setUpdateBusy(true); setUpdateMsg('');
+        try {
+          let d = await postJson(API.updateApply, {});
+          if (d.ok === false && d.linked) {
+            const sure = globalThis.confirm?.(L('当前是本地开发链接，更新会覆盖成打包版本，继续？', 'This is a local dev link. Updating replaces it with the packaged build. Continue?'));
+            if (sure === true) d = await postJson(API.updateApply, { force: true });
+          }
+          if (d.ok) {
+            setUpdateMsg(L(`已更新到 ${d.to}，重启 DSH 后生效。`, `Updated to ${d.to}. Restart DSH to apply.`));
+            setUpdateState({ ...(updateState ?? {}), restartRequired: true });
+          } else setUpdateMsg(d.error ?? L('更新失败', 'Update failed'));
+        } catch (e) { setUpdateMsg(e.message); }
+        finally { setUpdateBusy(false); }
+      };
 
       const clearOriginals = async () => {
         setCacheBusy(true); setCacheMsg('');
@@ -498,7 +559,10 @@ window.__ModuleLoader__.load({
       };
 
       useEffect(() => {
-        getJson(API.settings).then((d) => { setConfig(d.config ?? {}); setDraft(d.config ?? {}); }).catch((e) => setError(e.message));
+        getJson(API.settings).then((d) => {
+          setConfig(d.config ?? {}); setDraft(d.config ?? {});
+          if (typeof d.version === 'string') setVersion(d.version);
+        }).catch((e) => setError(e.message));
         loadCache();
       }, [loadCache]);
 
@@ -557,6 +621,26 @@ window.__ModuleLoader__.load({
           choose('toolSummary', '检索过程怎么显示', [['line', '一行摘要'], ['queries', '带检索词'], ['off', '不显示']], '联网检索的过程只影响展示，不影响导入内容'),
           choose('tier', '性能档位', [['auto', '自动'], ['low', '低'], ['mid', '标准'], ['high', '高']], '自动会按设备核数与可用内存选档，并在导入时按实测速度下调'),
           h('div', { style: { ...s.card, marginTop: 6, background: C.bg2 } },
+            h('div', { style: { fontSize: 13, color: C.label1 } }, L('插件更新', 'Plugin update')),
+            h('div', { style: s.hint },
+              `${L('当前版本', 'Current')} ${version || '?'}`
+              + (updateState?.latest ? `，${L('最新', 'latest')} ${updateState.latest}` : ''),
+            ),
+            h('div', { style: s.row },
+              h('button', {
+                style: { ...s.btn(), fontSize: 12, padding: '5px 11px' },
+                disabled: updateBusy,
+                onClick: checkUpdate,
+              }, updateBusy ? L('处理中', 'Working') : L('检查更新', 'Check')),
+              updateState?.newer && !updateState?.restartRequired
+                ? h('button', { style: { ...s.btn('primary'), fontSize: 12, padding: '5px 11px' }, disabled: updateBusy, onClick: applyUpdate },
+                  L('更新到新版', 'Update'))
+                : null,
+            ),
+            updateMsg ? h('div', { style: { ...s.hint, color: updateState?.restartRequired ? C.ok : C.label2 } }, updateMsg) : null,
+          ),
+
+          h('div', { style: { ...s.card, marginTop: 6, background: C.bg2 } },
             h('div', { style: { fontSize: 13, color: C.label1 } }, L('附件缓存', 'Attachment cache')),
             h('div', { style: s.hint },
               L('看图时生成的临时文件。超过七天没用会自动清一次，也可以现在清。', 'Temporary files made while viewing images. Cleared automatically after seven days, or now.'),
@@ -572,7 +656,7 @@ window.__ModuleLoader__.load({
             h('div', { style: s.row },
               h('span', { style: s.label }, `${L('原图存档', 'Originals')} ${fmtSize(originalInfo?.bytes ?? 0)}（${originalInfo?.files ?? 0} ${L('张', 'images')}）`),
               h('a', {
-                href: API.originalsInfo, target: '_blank', rel: 'noreferrer',
+                href: apiUrl(API.originalsInfo), target: '_blank', rel: 'noreferrer',
                 style: { ...s.btn(), fontSize: 12, padding: '5px 11px', textDecoration: 'none' },
               }, L('明细', 'Details')),
               h('button', {
