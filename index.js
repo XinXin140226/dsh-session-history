@@ -199,6 +199,7 @@ export async function apply(ctx, config) {
         return {
           id,
           title: '',
+          blank: false,
           updatedAt: r.updatedAt ?? r.header?.createdAt ?? 0,
           imported: importedIds.has(id),
         };
@@ -235,9 +236,13 @@ export async function apply(ctx, config) {
           try {
             const events = await readEventsFor(row.id);
             let title = '';
+            let hasUser = false;
             for (const e of events) {
               if (e.type === 'session/title' && typeof e.data?.title === 'string') title = e.data.title;
+              if (e.type === 'user/message') hasUser = true;
             }
+            // 一条用户消息都没有的会话就是刚开的新对话，DSH 还没来得及起标题
+            row.blank = !hasUser;
             row.title = title;
             if (title !== '') titleCache.set(row.id, title);
           } catch { /* 读不到就留空 */ }
