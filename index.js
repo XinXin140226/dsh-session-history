@@ -33,6 +33,10 @@ export const Config = Schema.object({
   dataDir: Schema.string(),
 });
 
+// 路由挂在 connection 服务上。声明依赖，Cordis 会等它就绪再激活插件，
+// 避免开机时抢先激活、路由注册不上又不再重试。
+export const inject = ['connection'];
+
 const PRESET_WITH_SEARCH = 'dsh-session-history';
 const PRESET_PLAIN = 'minimal';
 const PRESET_STANDARD = 'standard';
@@ -341,7 +345,23 @@ export async function apply(ctx, config) {
   // Cordis 要求服务先 provide；直接赋值会被拒绝
   ctx.provide('sessionHistory', service);
   ctx.effect(() => {
-    registerRoutes(ctx, { config, service, exportsDir, uploadDir });
+    // 少数环境里服务比插件晚一步，短时间内重试几次再放弃
+    let attempts = 0;
+    const tryRegister = () => {
+      const conn = ctx.get?.('connection');
+      if (conn?.fetch?.register) {
+        registerRoutes(ctx, { config, service, exportsDir, uploadDir, connection: conn });
+        return;
+      }
+      attempts += 1;
+      if (attempts > 20) {
+        ctx.logger?.warn?.('session history: 迟迟拿不到 connection 服务，界面路由未注册');
+        return;
+      }
+      const timer = setTimeout(tryRegister, 500);
+      timer.unref?.();
+    };
+    tryRegister();
     return () => {};
   }, 'session-history routes');
 }
