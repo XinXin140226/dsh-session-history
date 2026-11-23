@@ -13,6 +13,8 @@ import { runExport } from './lib/plan/exporter.mjs';
 import { registerRoutes } from './lib/host/routes.mjs';
 import { dirUsage, clearDir, autoCleanIfDue, markClean } from './lib/store/cache.mjs';
 import { OriginalStore } from './lib/store/originals.mjs';
+import { checkLatest, downloadAsset, installPackage, inspectInstall, compareVersion } from './lib/host/update.mjs';
+import { readFileSync } from 'node:fs';
 
 export const Config = Schema.object({
   // 导入会话记录哪个预设；关闭则记录官方 minimal，恢复后不带联网搜索
@@ -36,6 +38,14 @@ const PRESET_PLAIN = 'minimal';
 const PRESET_STANDARD = 'standard';
 // 导入时可选的预设，界面与路由共用同一份
 const PRESETS = new Set([PRESET_WITH_SEARCH, PRESET_PLAIN, PRESET_STANDARD]);
+
+// 当前版本与安装形态，更新功能要用
+const VERSION = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+  } catch { return '0.0.0'; }
+})();
 
 let sessionPersistenceRef;
 const titleCache = new Map();
@@ -91,6 +101,16 @@ export async function apply(ctx, config) {
   // 幂等表反查：DSH 会话 id 是否来自导入
   const importedIds = new Set();
   for (const sid of idmap.map.values()) importedIds.add(sid);
+
+  // 会话 id 到导入时标题的映射，作为标题兜底来源
+  const importedTitles = new Map();
+  try {
+    for (const rec of idmap.records()) {
+      if (typeof rec.sessionId === 'string' && typeof rec.title === 'string' && rec.title !== '') {
+        importedTitles.set(rec.sessionId, rec.title);
+      }
+    }
+  } catch { /* 表坏了就不兜底 */ }
 
   const services = {
     persistence,
@@ -184,13 +204,32 @@ export async function apply(ctx, config) {
         };
       }).filter(r => r.id);
 
-      // 标题从日志里的 session/title 事件折出来。列表记录里没有这个字段。
-      // 标题定了就不会变，读过的记在内存里，第二次直接命中，不再翻日志。
-      const targets = rows;
+      // 标题来源按可靠性排：官方标题快照 > 翻日志 > 导入时记下的标题
+      const missing = [];
+      const sq2 = ctx.get?.('sessionQuery');
+      if (sq2?.readTitleSnapshots) {
+        for (let i = 0; i < rows.length; i += 50) {
+          const chunk = rows.slice(i, i + 50);
+          try {
+            const snaps = await sq2.readTitleSnapshots(chunk.map(r => r.id));
+            snaps.forEach((entry, k) => {
+              const t = entry?.value?.title ?? entry?.title;
+              if (typeof t === 'string' && t.trim() !== '') {
+                chunk[k].title = t.trim();
+                titleCache.set(chunk[k].id, t.trim());
+              }
+            });
+          } catch { /* 这一批读不到，走兜底 */ }
+        }
+      }
+      for (const row of rows) {
+        if (row.title === '') missing.push(row);
+      }
+
       let cursor = 0;
       const worker = async () => {
-        while (cursor < targets.length) {
-          const row = targets[cursor++];
+        while (cursor < missing.length) {
+          const row = missing[cursor++];
           const cached = titleCache.get(row.id);
           if (cached !== undefined) { row.title = cached; continue; }
           try {
@@ -200,8 +239,9 @@ export async function apply(ctx, config) {
               if (e.type === 'session/title' && typeof e.data?.title === 'string') title = e.data.title;
             }
             row.title = title;
-            titleCache.set(row.id, title);
-          } catch { /* 读不到就留空，界面回退到短 id */ }
+            if (title !== '') titleCache.set(row.id, title);
+          } catch { /* 读不到就留空 */ }
+          if (row.title === '') row.title = importedTitles.get(row.id) ?? '';
         }
       };
       await Promise.all([worker(), worker(), worker(), worker()]);
@@ -253,6 +293,37 @@ export async function apply(ctx, config) {
       await editor.edit(entry, () => merged);
     },
     presets: [...PRESETS],
+    version: VERSION,
+    // 检查更新：唯一联网入口
+    async updateCheck() {
+      const info = await checkLatest();
+      const install = await inspectInstall(process.env.DSH_PROFILE_DIR ?? join(dshHome, 'profiles', process.env.DSH_PROFILE ?? 'web'));
+      if (!info.ok) return { ok: false, current: VERSION, error: info.error, errors: info.errors, linked: install.linked };
+      return {
+        ok: true,
+        current: VERSION,
+        latest: info.version,
+        tag: info.tag,
+        via: info.via,
+        newer: compareVersion(info.version, VERSION) > 0,
+        linked: install.linked,
+      };
+    },
+    // 下载并安装；链接安装需要 force 才覆盖
+    async updateApply(options = {}) {
+      const install = await inspectInstall(process.env.DSH_PROFILE_DIR ?? join(dshHome, 'profiles', process.env.DSH_PROFILE ?? 'web'));
+      if (install.linked && options.force !== true) {
+        return { ok: false, linked: true, reason: '当前是本地开发链接，更新会覆盖成打包版本。确认覆盖请带上 force。' };
+      }
+      const info = await checkLatest();
+      if (!info.ok) return { ok: false, error: info.error, errors: info.errors };
+      if (compareVersion(info.version, VERSION) <= 0) return { ok: false, error: '已经是最新版本', current: VERSION };
+      const got = await downloadAsset({ version: info.version, dataDir });
+      if (!got.ok) return { ok: false, error: got.error, errors: got.errors };
+      const installed = await installPackage({ tgzPath: got.path, profile: process.env.DSH_PROFILE ?? 'web' });
+      if (!installed.ok) return { ok: false, error: '安装命令执行失败', command: installed.command, output: installed.output };
+      return { ok: true, from: VERSION, to: info.version, bytes: got.bytes, sha256: got.sha256, command: installed.command, restartRequired: true };
+    },
     config: {
       searchPreset: config.searchPreset,
       timeStrategy: config.timeStrategy,
