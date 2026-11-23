@@ -454,7 +454,9 @@ window.__ModuleLoader__.load({
                 }),
               }),
               h('div', { style: { flex: 1, minWidth: 0 } },
-                h('div', { style: s.title }, r.title || `${L('未命名会话', 'Untitled session')} · ${String(r.id).slice(-8)}`),
+                h('div', { style: s.title }, r.blank
+                  ? L('新对话（还没发消息）', 'New chat (no messages yet)')
+                  : (r.title || `${L('未命名会话', 'Untitled session')} · ${String(r.id).slice(-8)}`)),
                 h('div', { style: s.meta }, fmtTime(r.updatedAt)),
               ),
               r.imported ? h('span', { style: s.tag(C.ok) }, '导入') : null,
