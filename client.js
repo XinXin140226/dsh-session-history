@@ -66,6 +66,17 @@ window.__ModuleLoader__.load({
       return data;
     }
 
+    // 和 postJson 一样，但不因为 ok:false 抛错，调用方要自己看字段
+    async function postJsonRaw(path, body) {
+      const res = await fetch(apiUrl(path), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      });
+      const data = await res.json().catch(() => ({ ok: false, error: `响应不是 JSON（${res.status}）` }));
+      return { status: res.status, data };
+    }
+
     async function postJson(path, body) {
       const res = await fetch(apiUrl(path), {
         method: 'POST',
@@ -512,15 +523,18 @@ window.__ModuleLoader__.load({
       const applyUpdate = async () => {
         setUpdateBusy(true); setUpdateMsg('');
         try {
-          let d = await postJson(API.updateApply, {});
+          let { data: d } = await postJsonRaw(API.updateApply, {});
           if (d.ok === false && d.linked) {
             const sure = globalThis.confirm?.(L('当前是本地开发链接，更新会覆盖成打包版本，继续？', 'This is a local dev link. Updating replaces it with the packaged build. Continue?'));
-            if (sure === true) d = await postJson(API.updateApply, { force: true });
+            if (sure === true) ({ data: d } = await postJsonRaw(API.updateApply, { force: true }));
           }
           if (d.ok) {
             setUpdateMsg(L(`已更新到 ${d.to}，重启 DSH 后生效。`, `Updated to ${d.to}. Restart DSH to apply.`));
             setUpdateState({ ...(updateState ?? {}), restartRequired: true });
-          } else setUpdateMsg(d.error ?? L('更新失败', 'Update failed'));
+          } else {
+            const detail = d.output ? `（${String(d.output).slice(0, 160)}）` : '';
+            setUpdateMsg(`${d.error ?? L('更新失败', 'Update failed')}${detail}`);
+          }
         } catch (e) { setUpdateMsg(e.message); }
         finally { setUpdateBusy(false); }
       };
