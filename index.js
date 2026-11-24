@@ -98,7 +98,15 @@ export async function apply(ctx, config) {
     import: Boolean(persistence),
     export: Boolean(sessionQuery) || Boolean(persistence),
     images: Boolean(attachments) && config.images,
-    device: { platform: device.platform, isAndroid: device.isAndroid, cores: device.cores },
+    device: {
+      platform: device.platform,
+      isAndroid: device.isAndroid,
+      // 容器亲和性会把它限制成 1，真机核数看 cpuCores
+      affinityCores: device.cores,
+      cpuCores: device.cpuCores ?? device.cores,
+      freeGb: Number(((device.effectiveFree ?? 0) / 1024 ** 3).toFixed(1)),
+      basis: device.basis ?? '',
+    },
     tier,
   };
 
@@ -341,6 +349,7 @@ export async function apply(ctx, config) {
       // 这里必须是配置原值（auto/低/中/高），不能是解析后的档位，否则界面会存回具体档位
       tier: config.tier,
       resolvedTier: tier,
+      tierBasis: device.basis ?? '',
     },
   };
 
