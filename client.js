@@ -479,6 +479,8 @@ window.__ModuleLoader__.load({
       const [cacheBusy, setCacheBusy] = useState(false);
       const [cacheMsg, setCacheMsg] = useState('');
       const [version, setVersion] = useState('');
+      const [resolvedTier, setResolvedTier] = useState('');
+      const [tierBasis, setTierBasis] = useState('');
       const [updateState, setUpdateState] = useState(null);
       const [updateBusy, setUpdateBusy] = useState(false);
       const [updateMsg, setUpdateMsg] = useState('');
@@ -547,12 +549,15 @@ window.__ModuleLoader__.load({
         getJson(API.settings).then((d) => {
           setConfig(d.config ?? {}); setDraft(d.config ?? {});
           if (typeof d.version === 'string') setVersion(d.version);
+          if (typeof d.config?.resolvedTier === 'string') setResolvedTier(d.config.resolvedTier);
+          if (typeof d.config?.tierBasis === 'string') setTierBasis(d.config.tierBasis);
         }).catch((e) => setError(e.message));
         loadCache();
       }, [loadCache]);
 
       const set = (k, v) => setDraft((prev) => ({ ...prev, [k]: v }));
       const dirty = config !== null && Object.keys(draft).some(k => draft[k] !== config[k]);
+      const resolvedTierLabel = ({ low: L('低', 'Low'), mid: L('标准', 'Mid'), high: L('高', 'High') })[resolvedTier] ?? resolvedTier;
 
       const save = async () => {
         setBusy(true); setError(''); setMsg('');
@@ -604,7 +609,10 @@ window.__ModuleLoader__.load({
           toggle('images', '导入图片（实验性）', '按需开启。图片按长边 2048 与质量八成五适度压缩，失败的单张只留文件名'),
           choose('timeStrategy', '时间处理', [['original', '保留原始时间'], ['import-time', '改写为导入时间']], '保留原始时间会还原真实顺序，老会话排在侧栏靠下'),
           choose('toolSummary', '检索过程怎么显示', [['line', '一行摘要'], ['queries', '带检索词'], ['off', '不显示']], '联网检索的过程只影响展示，不影响导入内容'),
-          choose('tier', '性能档位', [['auto', '自动'], ['low', '低'], ['mid', '标准'], ['high', '高']], '自动会按设备核数与可用内存选档，并在导入时按实测速度下调'),
+          choose('tier', '性能档位', [['auto', '自动'], ['low', '低'], ['mid', '标准'], ['high', '高']],
+            tierBasis
+              ? L(`自动按设备判定，当前 ${resolvedTierLabel}（${tierBasis}）`, `Auto, now ${resolvedTierLabel} (${tierBasis})`)
+              : '自动会按设备核数与可用内存选档，并在导入时按实测速度下调'),
           h('div', { style: { ...s.card, marginTop: 6, background: C.bg2 } },
             h('div', { style: { fontSize: 13, color: C.label1 } }, L('插件更新', 'Plugin update')),
             h('div', { style: s.hint },
