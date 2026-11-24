@@ -406,20 +406,6 @@ window.__ModuleLoader__.load({
         return rows.filter(r => (r.title ?? '').toLowerCase().includes(q));
       }, [rows, query]);
 
-      const [shareMsg, setShareMsg] = useState('');
-
-      const share = async () => {
-        if (!done) return;
-        setShareMsg('');
-        try {
-          const r = await postJson(API.share, { name: done.name });
-          if (r.shared) setShareMsg(L('已交给系统分享', 'Opened the system share sheet'));
-          else {
-            setShareMsg(L('这台机器没有分享面板，改为下载', 'No share sheet here, downloading instead'));
-            window.open(apiUrl(`${API.download}?name=${encodeURIComponent(done.name)}`), '_blank');
-          }
-        } catch (e) { setShareMsg(e.message); }
-      };
 
       const run = async () => {
         setBusy(true); setError(''); setDone(null);
@@ -467,19 +453,16 @@ window.__ModuleLoader__.load({
               style: { ...s.btn('primary'), opacity: picked.size === 0 || busy ? 0.5 : 1 },
               disabled: picked.size === 0 || busy, onClick: run,
             }, busy ? '导出中' : `导出已选 ${picked.size} 个`),
-            picked.size === 1 ? h('a', {
-              style: { ...s.btn(), textDecoration: 'none' },
-              href: apiUrl(`${API.markdown}?sessionId=${encodeURIComponent([...picked][0])}`),
-            }, L('下载这一个的 Markdown', 'Download this one as Markdown')) : null,
-            done ? h('button', { style: s.btn('primary'), onClick: share },
-              L('分享', 'Share')) : null,
-            done ? h('a', {
-              style: { ...s.btn(), textDecoration: 'none' },
+
+            done && !done.saved ? h('a', {
+              style: { ...s.btn('primary'), textDecoration: 'none' },
               href: apiUrl(`${API.download}?name=${encodeURIComponent(done.name)}`),
-            }, `下载 ${done.name}`) : null,
+            }, L('下载', 'Download')) : null,
           ),
-          done ? h('div', { style: s.hint }, `已导出 ${done.exported} 个，${fmtSize(done.bytes)}${done.failed ? `，失败 ${done.failed} 个` : ''}`) : null,
-          shareMsg ? h('div', { style: s.hint }, shareMsg) : null,
+          done ? h('div', { style: s.hint }, done.saved
+            ? L(`已导出 ${done.exported} 个，${fmtSize(done.bytes)}。文件在：下载/DSHA/${done.name}`,
+              `Exported ${done.exported}, ${fmtSize(done.bytes)}. Saved to Downloads/DSHA/${done.name}`)
+            : `已导出 ${done.exported} 个，${fmtSize(done.bytes)}${done.failed ? `，失败 ${done.failed} 个` : ''}`) : null,
           error ? h('div', { style: s.err }, error) : null,
         ),
       );
