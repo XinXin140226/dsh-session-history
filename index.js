@@ -338,7 +338,9 @@ export async function apply(ctx, config) {
       timeStrategy: config.timeStrategy,
       toolSummary: config.toolSummary,
       images: config.images,
-      tier,
+      // 这里必须是配置原值（auto/低/中/高），不能是解析后的档位，否则界面会存回具体档位
+      tier: config.tier,
+      resolvedTier: tier,
     },
   };
 
