@@ -330,7 +330,12 @@ export async function apply(ctx, config) {
     async updateApply(options = {}) {
       const install = await inspectInstall(process.env.DSH_PROFILE_DIR ?? join(dshHome, 'profiles', process.env.DSH_PROFILE ?? 'web'));
       if (install.linked && options.force !== true) {
-        return { ok: false, linked: true, reason: '当前是本地开发链接，更新会覆盖成打包版本。确认覆盖请带上 force。' };
+        return {
+          ok: false,
+          linked: true,
+          error: '当前是本地开发链接，更新会覆盖成打包版本',
+          reason: '当前是本地开发链接，更新会覆盖成打包版本。确认覆盖请带上 force。',
+        };
       }
       const info = await checkLatest();
       if (!info.ok) return { ok: false, error: info.error, errors: info.errors };
