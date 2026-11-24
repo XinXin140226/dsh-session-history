@@ -5,6 +5,8 @@ import { apply as jsonlPlugin } from '@deepseek-ai/dsh-session-persistence-jsonl
 import { apply as applyPlugin, Config } from '../index.js';
 import { mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 
+process.env.DSH_SESSION_HISTORY_NO_BRIDGE = '1';
+
 const ZIP = '/storage/emulated/0/Download/Browser/deepseek_data-2026-11-19.zip';
 const ROOT = '/tmp/test-routes-root';
 const DATA = '/tmp/test-routes-data';
